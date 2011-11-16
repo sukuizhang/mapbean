@@ -5,7 +5,7 @@
             [mapbean.interceptor.maptype :as maptype])
   (:import [org.springframework.remoting.rmi RmiProxyFactoryBean]))
 
-(defn ^:private get-service0
+(defn- get-service0
      [service-interface service-url]
      (try 
        (let [rmi (RmiProxyFactoryBean.)]
@@ -32,10 +32,58 @@
                   (drop-while nil?)                  
                   (first)))))
 
+(defn- delay-handler
+  [factory service-type service-name ops]
+  (let [real (atom nil)
+        service-str (str "[service type:"
+                         service-type                         
+                         (and service-name (str " service-name:" service-name))   
+                         "]")]
+    (proxy [java.lang.reflect.InvocationHandler] []
+      (invoke [proxy method args]
+              (if (not @real)
+                (swap! real (fn [a] {:service (factory service-type service-name)})))
+              (let [service (:service @real)]
+                (cond
+                 (and (= "toString" (.getName method))
+                         (= 0 (count (.getParameterTypes method))))
+                 service-str
+                 (and (= "hashCode" (.getName method))
+                      (= 0 (count (.getParameterTypes method))))
+                 (.hashCode service-type)
+                 (and (= "equals" (.getName method))
+                      (= 1 (count (.getParameterTypes method)))
+                      (= Object (nth (.getParameterTypes method) 0)))
+                 (= service (nth args 0))
+                 (and (= "getClass" (.getName method))
+                      (= 0 (count (.getParameterTypes method))))
+                 service-type                 
+                 :else
+                 (if service
+                   (.invoke method service args)
+                   (if (not (:safe-invoke ops))
+                     (throw (NullPointerException.
+                             (str "can not get rmi service" service-str)))))))))))
+
+(defn- wrap-delay
+  [factory & [ops]]
+  (fn [service-type service-name]
+    (let [handler (delay-handler factory service-type service-name ops)]
+      (java.lang.reflect.Proxy/newProxyInstance (.getClassLoader service-type)
+                                                (into-array [service-type])
+                                                handler))))
+
 (defn map-service
   [service-type urls & [ops]]
   (let [service-name (:service-name ops)
-        service ((create-service-factory urls) service-type service-name)
+        factory (-> (create-service-factory urls)
+                    (wrap-delay ops))
+        service (factory service-type service-name)
         ns (or (:ns ops) (str *ns*))
         interceptors (or (:interceptors ops) [maptype/with-type])]
     (mapbean/map-bean service ns interceptors)))
+
+(defn map-services
+  [service-types urls & [ops]]
+  (doseq [service-type service-types]
+    (map-service service-type urls ops)))
