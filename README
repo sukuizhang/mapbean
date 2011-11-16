@@ -1,0 +1,84 @@
+# map bean
+
+1.it's core function is map java bean methods to clojure functions.
+
+2.fast config and invoke rmi service.
+
+## Usage
+add dependency ["mapbean" 0.0.1] to your project.
+
+1.map java bean methods to clojure functions.
+   do (mapbean/map-bean bean ns interceptors) will auto create clojure functions corresponding to the java methods separately and put it into the namespace you specified.when you invoke these cojure functions,result you invoke the corresponding java methods on your bean.note that if not only 1 method use a same name, then it merge as single clojure function.
+   follow is means for args:
+          bean: your bean to map.
+          ns:   your namespace to place these functions.
+          interceptors: a seq of function like follow:
+               (interceptor function {arg-len java-method, ...})
+     interceptors use to intercep these clojure function and provide other service, there is a very useful interceptor mapbean.interceptor.maptype/with-type use to map java type parameters and return value to simpler clojure's.
+
+example:
+if there is java code:
+public class A{
+   public void f1(String a int b){}
+   public void f1(String a){}
+   public void f2(int a){}
+   public void f2(String a){}
+}
+
+then after you do 
+     (mapbean/map-bean (A.) 'bean.a nil)
+2 function f1 and f2 will auto create and put in namespace bean.a.
+
+
+2.help rmi invoke.
+step 1. 
+      provide a fnction that return your rmi service export urls as follow:
+      (defn urls [] 
+         ["192.168.0.83:1799" "192.168.1.23:1788" ...])
+      put all export url you need in it.
+
+step 2.
+     map you service methods to special clojure namespace:
+     (mapbean.rmi/map-service service-interface urls & [ops])
+        service-interface: rmi service interface
+        urls: the function you create in step 1.
+        ops:  a map contains several parameter as follow:
+              ns: the namespace you want to put your functions, if is nil, will put your functions to current namespace *ns*.
+              service-name: when your service do not use a default servicename, you can special other use this key.default rule is like: 
+                              xyz.abc.IYourService --> yourService
+                              xyz.abc.MyService    --> myService
+              interceptors: an interceptor seq as explain preview, if nil, it will be default value of [mapbean.interceptor.maptype/with-type]
+
+step 3.
+    now you can use your maped function, for expample:
+suppose that you has export your java interface as rmi service:
+public class UserInfo{
+       public String username;
+       public long money;
+       public Map exps;
+       public String[] friends;
+}
+public interface A{
+       public UserInfo login(String username, password)
+       public UserInfo changeInfo(String username, UserInfo newInfo)
+}
+
+after you do:
+      (mapbean.rmi/map-service A urls)
+there are 2 function in you current namespace:
+UserInfo (login username password)
+UserInfo (changeInfo username newInfo)
+
+map parameters and result:
+    sometimes build java type parameters is a trouble, so as using java type return value directly.the interceptor mapbean.interceptor.maptype/with-type can make it simpler,it auto map the java type parameters and return value to better clojure's.
+    in preview example:
+    you can invoke:
+    (changeInfo "tt" {:money 100 :exps {:Chess 100 :Go 50} :friends ["xx" "yy"])
+    and you will be grad to get return value: 
+    {:username "tt" :money 100 :exps {:Chess 100 :Go 50} :friends ["xx" "yy"]}
+
+## License
+
+Copyright (C) 2011
+
+Distributed under the Eclipse Public License, the same as Clojure.
