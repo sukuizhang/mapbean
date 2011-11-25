@@ -94,8 +94,17 @@
           [f-name (create-fn bean f-name method interceptors)]))
        (into {})))
 
+(defn- translate-function-name [java-name]
+  (reduce
+   #(str %1
+         (if (<= (int \A) (int %2) (int \Z))
+           (str "-" (Character/toLowerCase %2)) 
+           %2))
+   ""
+   java-name))
+
 (defn map-bean
   [bean ns interceptors]
   (let [ns (str ns)]
     (doseq [[f-name f] (create-fns bean interceptors)]      
-      (bind-to-ns ns f-name f))))
+      (bind-to-ns ns (translate-function-name f-name) f))))

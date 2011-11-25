@@ -50,5 +50,5 @@
 (map-bean (Date.) "xyz.abc.123" nil)
 
 (deftest test-map-bean
-  (xyz.abc.123/setTime 10000)
-  (is (= 10000 (xyz.abc.123/getTime))))
+  (xyz.abc.123/set-time 10000)
+  (is (= 10000 (xyz.abc.123/get-time))))
