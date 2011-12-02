@@ -52,3 +52,5 @@
 (deftest test-map-bean
   (xyz.abc.123/set-time 10000)
   (is (= 10000 (xyz.abc.123/get-time))))
+
+

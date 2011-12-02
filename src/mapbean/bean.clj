@@ -10,12 +10,16 @@
       Float/TYPE Float
       Double/TYPE Double})
 
-(defn- sub-type-of [type sub-type]
+(defn- sub-type-of
+"check 'sub type of' relation of two types, ignore difference from primitive type and it's wrapped type"
+  [type sub-type]
   (let [type (type-map type type)
         sub-type (type-map sub-type sub-type)]
     (.isAssignableFrom type sub-type)))
 
-(defn- check-method [m name arg-types]
+(defn- suit-for-method
+  "check if the name and arg type list suit for special method"
+  [m name arg-types]
   (and (= name (.getName m))
        (= (count (seq (.getParameterTypes m))) (count arg-types))
        (reduce
@@ -24,77 +28,106 @@
         true
         (map (fn [a b] [a b]) (seq (.getParameterTypes m)) arg-types))))
 
-(def find-method
+(def ^{:doc "find method from special java type according to method name and arg type list"} find-method
   (memoize (fn [service-type name arg-types]
              (->> (.getMethods service-type)
                  (seq)
-                 (filter #(check-method % name arg-types))
+                 (filter #(suit-for-method % name arg-types))
                  (first)))))
 
-(defn invoke [service name arg-types args]
-  (let [cl (if (= Class (.getClass service)) service (type service))
-        invoke-instance (if (= service cl) nil service)
+(defn invoke
+  "invoke java method on a java obj
+   target: invoke target, it can be a java.lang.Class if it's static invoke.
+   m-name: method name
+   arg-types: arg type list
+   args: invoke args"
+  [target m-name arg-types args]
+  (let [target-type (if (= Class (.getClass target)) target (type target))
+        invoke-target (if (= target target-type) nil target)
         arg-types (or
                    (and arg-types arg-types)
                    (map type args))
-        m (find-method (.getClass service) name arg-types)]
-    (.invoke m invoke-instance (into-array Object args))))
+        m (find-method target-type m-name arg-types)]
+    (.invoke m invoke-target (into-array Object args))))
 
 (defn- add-single-method
+  "add a method to methods struction,follow is an example of methods struction for some methods of java.lang.ClassLoader:
+  {\"forName\" {1 {:method <Method Class<?> forName(String className)> :types [String]}
+            3 {:method <Method Class<?> forName(String name, boolean initialize, ClassLoader loader)> :types [String boolean ClassLoader]}}
+  \"getFields\" {0 {:method <Method Field[] getFields()> :types []}}}
+if more then 1 methods use same method name, as follow:
+UserInfo getUser(String name)
+UserInfo getUser(long id)
+it will be {\"getUser\" {1 {:multi true}}}
+because parameters of clojure function has no type, in this instance, we cann't determine what type the parameters shoud be !
+ms: functions struction
+method: a java method"
   [ms method]
   (let [m-name (.getName method)
         arg-types (vec (.getParameterTypes method))]
     (update-in ms [m-name (count arg-types)]
                #(if % {:multi true} {:types arg-types :method method}))))
 
-(defn- load-methods [service-type]
+(defn- load-methods
+  "load methods struction from a java type, add all public methods in it"
+  [service-type]
   (reduce add-single-method nil (.getMethods service-type)))
 
-(defn- bind-to-ns [ns-name var-name var]
+(defn- make-s-array
+  "make a symbol vector use as arg name"
+  [len]
+  (vec (map #(symbol (str "arg" %)) (range len))))
+
+(defn create-fn
+  "create a clojure function with java method name, method struction, interceptors and target to invoke on.
+   it first build a create clojure list like follow:
+  (fn
+    ([target arg1] mapbean.bean/invoke target \"forName\" [String] [arg1])
+    ([target arg1 arg2 arg3] mapbean.bean/invoke target [String boolean ClassLoader] [arg1 arg2 arg3]))
+  and eval it to create a clojure function, and then partial it to inject target and intercept it.
+  target: underlying invoke target
+  m-name: java method name
+  method: method struction in methods struction define preview
+  interceptors: interceptors to interceptor this invoke."
+  [target m-name method interceptors]
+  (let [body (map (fn [[len m]]
+                    (let [args (make-s-array len)
+                          all-args (vec (cons 'target args))
+                          types (get-in method [len :types])]
+                      (list all-args
+                            (list 'mapbean.bean/invoke
+                                  'target
+                                  m-name
+                                  types args))))
+                  method)
+        fn-list (cons 'fn body)] 
+    (-> (eval fn-list)
+        (partial target)
+        (#(reduce
+           (fn [f interceptor] (interceptor f method))
+           % interceptors)))))
+
+(defn create-fns
+  "create a map contains all java method name and clojure function pairs from a java obj."
+  [obj interceptors]
+  (->> (load-methods (.getClass obj))
+       (map
+        (fn [[f-name method]]
+          [f-name (create-fn obj f-name method interceptors)]))
+       (into {})))
+
+(defn- bind-to-ns
+  "bind var to namespace with special symbol name"
+  [ns-name var-name var]
   (let [var-name (symbol var-name)
         ns (or (and ns-name (create-ns (symbol ns-name)))
                *ns*)]
     (intern ns var-name var)))
 
-(defn- make-s-array [len]
-  (vec (map #(symbol (str "arg" %)) (range len))))
-
-(defonce ^:private place-bean-ns "place-bean-ns-auto-1377")
-(defonce ^:private place-bean-id-seek (atom 0))
-(defn- generate-bean-name [bean]
-  (-> bean
-      (.getClass)
-      (.getName)
-      (.toLowerCase)
-      (.replaceAll "[.]" "-")
-      (#(str % "-auto-" (swap! place-bean-id-seek inc)))))
-
-(defn create-fn [bean f-name method interceptors]
-  (let [bean-name (generate-bean-name bean)]
-    (bind-to-ns place-bean-ns bean-name bean)
-    (let [body (map (fn [[len m]]
-                      (let [args (make-s-array len)
-                            types (get-in  method [len :types])]
-                        (list args
-                              (list 'mapbean.bean/invoke
-                                    (symbol (str place-bean-ns "/" bean-name))
-                                    f-name
-                                    types args))))
-                    method)
-          fn-list (cons 'fn body)]
-      (-> (eval fn-list)
-          (#(reduce
-             (fn [f interceptor] (interceptor f method))
-             % interceptors))))))
-
-(defn create-fns [bean interceptors]
-  (->> (load-methods (.getClass bean))
-       (map
-        (fn [[f-name method]]
-          [f-name (create-fn bean f-name method interceptors)]))
-       (into {})))
-
-(defn- translate-function-name [java-name]
+(defn- translate-function-name
+  "translate java method name to more clojure function name, for example:
+    getUserInfo -> get-user-info"
+  [java-name]
   (reduce
    #(str %1
          (if (<= (int \A) (int %2) (int \Z))
@@ -104,6 +137,7 @@
    java-name))
 
 (defn map-bean
+  "create clojure function map,and bind them to special namespace."
   [bean ns interceptors]
   (let [ns (str ns)]
     (doseq [[f-name f] (create-fns bean interceptors)]      
