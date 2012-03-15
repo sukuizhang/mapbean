@@ -76,7 +76,9 @@
                  service-type                 
                  :else
                  (if service
-                   (.invoke method service args)
+                   (try (.invoke method service args)
+                        (catch java.lang.reflect.InvocationTargetException e
+                          (throw (.getTargetException e))))
                    (if (not (:safe-invoke ops))
                      (throw (NullPointerException.
                              (str "can not get rmi service" service-str)))))))))))
