@@ -48,7 +48,10 @@
                    (and arg-types arg-types)
                    (map type args))
         m (find-method target-type m-name arg-types)]
-    (.invoke m invoke-target (into-array Object args))))
+    (try
+      (.invoke m invoke-target (into-array Object args))
+      (catch java.lang.reflect.InvocationTargetException e
+        (throw (.getTargetException e))))))
 
 (defn- add-single-method
   "add a method to methods struction,follow is an example of methods struction for some methods of java.lang.ClassLoader:
