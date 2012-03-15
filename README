@@ -5,7 +5,7 @@
 2.fast config and invoke rmi service.
 
 ## Usage
-add dependency ["mapbean" 0.0.1] to your project.
+add dependency ["mapbean" 0.0.3] to your project.
 
 1.map java bean methods to clojure functions.
    do (mapbean/map-bean bean ns interceptors) will auto create clojure functions corresponding to the java methods separately and put it into the namespace you specified.when you invoke these cojure functions,result you invoke the corresponding java methods on your bean.note that if not only 1 method use a same name, then it merge as single clojure function.
